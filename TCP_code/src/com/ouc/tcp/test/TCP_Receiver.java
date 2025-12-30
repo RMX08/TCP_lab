@@ -18,8 +18,8 @@ public class TCP_Receiver extends TCP_Receiver_ADT {
 
     /*构造函数*/
     public TCP_Receiver() {
-        super();	//调用超类构造函数
-        super.initTCP_Receiver(this);	//初始化TCP接收端
+        super();	//调用超类构造函数，创建底层 Client、初始化 dataQueue，并把 recvData.txt 清空
+        super.initTCP_Receiver(this);	//启动 ListenPacket 监听线程，初始化TCP接收端
     }
 
     @Override
@@ -41,7 +41,7 @@ public class TCP_Receiver extends TCP_Receiver_ADT {
             System.out.println("Recieve Computed: "+CheckSum.computeChkSum(recvPack));
             System.out.println("Recieved Packet"+recvPack.getTcpH().getTh_sum());
             System.out.println("Problem: Packet Number: "+recvPack.getTcpH().getTh_seq()+" + InnerSeq:  "+sequence);
-            tcpH.setTh_ack(-1);
+            tcpH.setTh_ack(-1); // 作为 NACK（否认确认）
             ackPack = new TCP_PACKET(tcpH, tcpS, recvPack.getSourceAddr());
             tcpH.setTh_sum(CheckSum.computeChkSum(ackPack));
             //回复ACK报文段
@@ -58,6 +58,7 @@ public class TCP_Receiver extends TCP_Receiver_ADT {
 
     @Override
     //交付数据（将数据写入文件）；不需要修改
+    //把 dataQueue 里的 int 数组按行追加写入 recvData.txt
     public void deliver_data() {
         //检查dataQueue，将数据写入文件
         File fw = new File("recvData.txt");

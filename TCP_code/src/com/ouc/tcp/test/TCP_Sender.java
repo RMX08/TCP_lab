@@ -11,13 +11,15 @@ import com.ouc.tcp.tool.TCP_TOOL;
 
 public class TCP_Sender extends TCP_Sender_ADT {
 
-    private TCP_PACKET tcpPack;	//待发送的TCP数据报
+    private TCP_PACKET tcpPack;	//当前“正在等待 ACK 的那一个数据报文”
     private volatile int flag = 0;
+    //0：还没收到期望 ACK（rdt_send 会一直等）
+    //1：已收到期望 ACK（rdt_send 返回）
 
     /*构造函数*/
     public TCP_Sender() {
-        super();	//调用超类构造函数
-        super.initTCP_Sender(this);		//初始化TCP发送端
+        super();	//调用超类构造函数,创建底层 Client 并初始化 ackQueue 等；打印 Sender socket 地址
+        super.initTCP_Sender(this);	//启动 ListenACK 监听线程,初始化TCP发送端
     }
 
     @Override
@@ -27,7 +29,7 @@ public class TCP_Sender extends TCP_Sender_ADT {
         //生成TCP数据报（设置序号和数据字段/校验和),注意打包的顺序
         tcpH.setTh_seq(dataIndex * appData.length + 1);//包序号设置为字节流号：
         tcpS.setData(appData);
-        tcpPack = new TCP_PACKET(tcpH, tcpS, destinAddr);
+        tcpPack = new TCP_PACKET(tcpH, tcpS, destinAddr);//组装报文
         //更新带有checksum的TCP 报文头
         tcpH.setTh_sum(CheckSum.computeChkSum(tcpPack));
         tcpPack.setTcpH(tcpH);
@@ -38,7 +40,9 @@ public class TCP_Sender extends TCP_Sender_ADT {
 
         //等待ACK报文
         //waitACK();
-        while (flag==0);
+
+        //“停等”的等 ACK 阶段：只有当后台收到 ACK 并把 flag 改成 1，这里才会返回
+        while (flag==0); // 可能死循环
     }
 
     @Override
@@ -54,7 +58,7 @@ public class TCP_Sender extends TCP_Sender_ADT {
     @Override
     //需要修改
     public void waitACK() {
-        //循环检查ackQueue
+        //从 ackQueue 取一个 ACK 号，判断它是不是当前 tcpPack 的确认
         //循环检查确认号对列中是否有新收到的ACK
         if(!ackQueue.isEmpty()){
             int currentAck=ackQueue.poll();
@@ -65,7 +69,7 @@ public class TCP_Sender extends TCP_Sender_ADT {
                 //break;
             }else{
                 System.out.println("Retransmit: "+tcpPack.getTcpH().getTh_seq());
-                udt_send(tcpPack);
+                udt_send(tcpPack); //重传
                 flag = 0;
             }
         }
