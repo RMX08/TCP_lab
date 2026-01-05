@@ -62,16 +62,17 @@ public class TCP_Sender extends TCP_Sender_ADT {
         //循环检查确认号对列中是否有新收到的ACK
         if(!ackQueue.isEmpty()){
             int currentAck=ackQueue.poll();
-            if (currentAck == tcpPack.getTcpH().getTh_seq()){
+            int expectedACK = tcpPack.getTcpH().getTh_seq();    // 期望收到的ACK
+
+            if (currentAck == expectedACK){
                 // 收到正确ACK，设置flag=1，让rdt_send继续
-                System.out.println("Clear: "+tcpPack.getTcpH().getTh_seq());
-                flag = 1;
-                //break;
+                System.out.println("[RDT-2.2] ACK matched, confirmed: "+expectedACK);
+                flag = 1; // 让rdt_send继续
             }else{
-                // 收到NACK或错误ACK，重传
-                System.out.println("Retransmit: "+tcpPack.getTcpH().getTh_seq());
+                // 收到重复ACK或ACK，重传无效
+                System.out.println("[RDT-2.2] Duplicate ACK, retransmit: "+expectedACK);
                 udt_send(tcpPack); //重传
-                flag = 0;
+                flag = 0; // 保持等待
             }
         }
     }
@@ -82,13 +83,23 @@ public class TCP_Sender extends TCP_Sender_ADT {
         // 检查ACK校验和
         if (CheckSum.computeChkSum(recvPack) == recvPack.getTcpH().getTh_sum())
         {   // 校验和正确
-            System.out.println("Receive ACK Number： "+ recvPack.getTcpH().getTh_ack());
-            ackQueue.add(recvPack.getTcpH().getTh_ack());
+            int ackNum = recvPack.getTcpH().getTh_ack();
+            System.out.println("[RDT-2.2] Receive ACK Number： "+ ackNum);
+            ackQueue.add(ackNum);
         }
         else
-        {   // 校验和错误，ACK损坏，视为NACK
-            System.out.println("Receive Corrupted ACK , treat as NACK ");
-            ackQueue.add(-1);
+        {   // 校验和错误，ACK损坏,视为重复ACK
+            System.out.println("[RDT-2.2] Receive Corrupted ACK , treat as duplicate ");
+
+            if (!ackQueue.isEmpty())
+            { // 使用上一次的ACK值（如果队列不为空）
+                ackQueue.add(ackQueue.peek());
+            }
+            else
+            { // 还没有收到任何ACK
+                ackQueue.add(-1);
+            }
+
         }
 
         //处理ACK报文
