@@ -16,6 +16,10 @@ public class TCP_Sender extends TCP_Sender_ADT {
     //0：还没收到期望 ACK（rdt_send 会一直等）
     //1：已收到期望 ACK（rdt_send 返回）
 
+    // 创建计时器及重传任务
+    private UDT_Timer timer;
+    private UDT_RetransTask reTrans;
+
     /*构造函数*/
     public TCP_Sender() {
         super();	//调用超类构造函数,创建底层 Client 并初始化 ackQueue 等；打印 Sender socket 地址
@@ -36,6 +40,12 @@ public class TCP_Sender extends TCP_Sender_ADT {
 
         //发送TCP数据报
         udt_send(tcpPack);
+
+        // 启动计时器：3s后执行重传任务
+        timer = new UDT_Timer();
+        reTrans = new UDT_RetransTask(client, tcpPack);
+        timer.schedule(reTrans, 3000, 3000);
+
         flag = 0;
 
         //等待ACK报文
@@ -43,13 +53,17 @@ public class TCP_Sender extends TCP_Sender_ADT {
 
         //“停等”的等 ACK 阶段：只有当后台收到 ACK 并把 flag 改成 1，这里才会返回
         while (flag==0); // 可能死循环
+
+        // 收到正确 ACK，关闭计时器
+        if(timer != null)
+            timer.cancel();
     }
 
     @Override
     //不可靠发送：将打包好的TCP数据报通过不可靠传输信道发送；仅需修改错误标志
     public void udt_send(TCP_PACKET stcpPack) {
         //设置错误控制标志
-        tcpH.setTh_eflag((byte)1);  //eFlag = 0，信道无错误，发送方像接收方发送数据时不会产生位错
+        tcpH.setTh_eflag((byte)7);  //eFlag = 0，信道无错误，发送方像接收方发送数据时不会产生位错
         //System.out.println("to send: "+stcpPack.getTcpH().getTh_seq());
         //发送数据报
         client.send(stcpPack);
@@ -66,13 +80,11 @@ public class TCP_Sender extends TCP_Sender_ADT {
 
             if (currentAck == expectedACK){
                 // 收到正确ACK，设置flag=1，让rdt_send继续
-                System.out.println("[RDT-2.2] ACK matched, confirmed: "+expectedACK);
+                System.out.println("[RDT-3.0] ACK matched, confirmed: "+expectedACK);
                 flag = 1; // 让rdt_send继续
             }else{
-                // 收到重复ACK或ACK，重传无效
-                System.out.println("[RDT-2.2] Duplicate ACK, retransmit: "+expectedACK);
-                udt_send(tcpPack); //重传
-                flag = 0; // 保持等待
+                // 收到重复/错误 ACK -> 忽略，继续等超时
+                System.out.println("[RDT-3.0] Ignored ACK: " + currentAck + " (Expected: " + expectedACK + ")");
             }
         }
     }
