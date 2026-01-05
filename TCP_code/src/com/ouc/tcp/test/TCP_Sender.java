@@ -49,7 +49,7 @@ public class TCP_Sender extends TCP_Sender_ADT {
     //不可靠发送：将打包好的TCP数据报通过不可靠传输信道发送；仅需修改错误标志
     public void udt_send(TCP_PACKET stcpPack) {
         //设置错误控制标志
-        tcpH.setTh_eflag((byte)0);  //eFlag = 0，信道无错误，发送方像接收方发送数据时不会产生位错
+        tcpH.setTh_eflag((byte)1);  //eFlag = 0，信道无错误，发送方像接收方发送数据时不会产生位错
         //System.out.println("to send: "+stcpPack.getTcpH().getTh_seq());
         //发送数据报
         client.send(stcpPack);
@@ -62,12 +62,13 @@ public class TCP_Sender extends TCP_Sender_ADT {
         //循环检查确认号对列中是否有新收到的ACK
         if(!ackQueue.isEmpty()){
             int currentAck=ackQueue.poll();
-            // System.out.println("CurrentAck: "+currentAck);
             if (currentAck == tcpPack.getTcpH().getTh_seq()){
+                // 收到正确ACK，设置flag=1，让rdt_send继续
                 System.out.println("Clear: "+tcpPack.getTcpH().getTh_seq());
                 flag = 1;
                 //break;
             }else{
+                // 收到NACK或错误ACK，重传
                 System.out.println("Retransmit: "+tcpPack.getTcpH().getTh_seq());
                 udt_send(tcpPack); //重传
                 flag = 0;
@@ -78,13 +79,20 @@ public class TCP_Sender extends TCP_Sender_ADT {
     @Override
     //接收到ACK报文：检查校验和，将确认号插入ack队列;NACK的确认号为－1；不需要修改
     public void recv(TCP_PACKET recvPack) {
-        System.out.println("Receive ACK Number： "+ recvPack.getTcpH().getTh_ack());
-        ackQueue.add(recvPack.getTcpH().getTh_ack());
-        System.out.println();
+        // 检查ACK校验和
+        if (CheckSum.computeChkSum(recvPack) == recvPack.getTcpH().getTh_sum())
+        {   // 校验和正确
+            System.out.println("Receive ACK Number： "+ recvPack.getTcpH().getTh_ack());
+            ackQueue.add(recvPack.getTcpH().getTh_ack());
+        }
+        else
+        {   // 校验和错误，ACK损坏，视为NACK
+            System.out.println("Receive Corrupted ACK , treat as NACK ");
+            ackQueue.add(-1);
+        }
 
         //处理ACK报文
         waitACK();
-
     }
 
 }
