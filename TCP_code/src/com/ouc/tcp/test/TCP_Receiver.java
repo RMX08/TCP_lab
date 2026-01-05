@@ -37,11 +37,14 @@ public class TCP_Receiver extends TCP_Receiver_ADT {
             //将接收到的正确有序的数据插入data队列，准备交付
             dataQueue.add(recvPack.getTcpS().getData());
             sequence++;
-        }else{
+        }
+        else{  // 校验失败，数据损坏
             System.out.println("Recieve Computed: "+CheckSum.computeChkSum(recvPack));
             System.out.println("Recieved Packet"+recvPack.getTcpH().getTh_sum());
             System.out.println("Problem: Packet Number: "+recvPack.getTcpH().getTh_seq()+" + InnerSeq:  "+sequence);
-            tcpH.setTh_ack(-1); // 作为 NACK（否认确认）
+
+            // 作为 NACK（否认确认）
+            tcpH.setTh_ack(-1);
             ackPack = new TCP_PACKET(tcpH, tcpS, recvPack.getSourceAddr());
             tcpH.setTh_sum(CheckSum.computeChkSum(ackPack));
             //回复ACK报文段
@@ -49,7 +52,6 @@ public class TCP_Receiver extends TCP_Receiver_ADT {
         }
 
         System.out.println();
-
 
         //交付数据（每20组数据交付一次）
         if(dataQueue.size() == 20)
@@ -89,7 +91,7 @@ public class TCP_Receiver extends TCP_Receiver_ADT {
     //回复ACK报文段
     public void reply(TCP_PACKET replyPack) {
         //设置错误控制标志
-        tcpH.setTh_eflag((byte)0);	//eFlag = 0，信道无错误，接收方向发送方发送ACK或NACK信息时不会出现错误
+        tcpH.setTh_eflag((byte)1);	//eFlag = 0，信道无错误，接收方向发送方发送ACK或NACK信息时不会出现错误
         //发送数据报
         client.send(replyPack);
     }
