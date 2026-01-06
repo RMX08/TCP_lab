@@ -36,19 +36,19 @@ public class TCP_Receiver extends TCP_Receiver_ADT {
         {   // 校验通过
             if (recvSeq ==  expectedSeq)
             {   // 新包
-                System.out.println("[RDT-2.2] Receive expected packet, seq: " + recvSeq);
+                System.out.println("[GBN] Receive expected packet, seq: " + recvSeq);
                 // 交付数据
                 dataQueue.add(recvPack.getTcpS().getData());
                 // 更新期望序号
                 expectedSeq += 100;
-                // 发送ACK
+                // 发送 ACK
                 lastACK = recvSeq;
                 tcpH.setTh_ack(recvSeq);
             }
             else
-            {   // 重复包or失序包
-                System.out.println("[RDT-2.2] Receive duplicate packet, seq: " + recvSeq);
-                //不交付数据，发送重复ACK
+            {   // 失序包
+                System.out.println("[GBN] Receive out-of-order packet, seq: " + recvSeq);
+                //GBN： 丢弃不缓存，发送重复ACK
                 tcpH.setTh_ack(lastACK);
             }
             //生成ACK报文段（设置确认号）
@@ -58,9 +58,9 @@ public class TCP_Receiver extends TCP_Receiver_ADT {
             reply(ackPack);
         }
         else{  // 校验失败，数据损坏
-            System.out.println("[RDT-2.2] Receive corrupted packet!  " );
-            System.out.println("  Expected seq: " + expectedSeq + ", last ACKed: " + lastACK);
-            // 不发送 NACK，发送重复ACK
+            System.out.println("[GBN] Receive corrupted packet!  " );
+
+            // GBN：发送重复ACK
             tcpH.setTh_ack(lastACK);
             ackPack = new TCP_PACKET(tcpH, tcpS, recvPack.getSourceAddr());
             tcpH.setTh_sum(CheckSum.computeChkSum(ackPack));
