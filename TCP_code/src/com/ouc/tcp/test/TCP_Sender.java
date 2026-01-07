@@ -16,15 +16,15 @@ public class TCP_Sender extends TCP_Sender_ADT {
 
     private TCP_PACKET tcpPack;	//当前“正在等待 ACK 的那一个数据报文”
 
-    // 创建计时器及重传任务
-    private UDT_Timer timer;
-
-    // 创建GBN 滑动窗口变量
+    // 创建 SR 滑动窗口变量
     private volatile int base = 1;      // 最早未确认的包序号
     private volatile int nextSeq = 1;   // 下一个待发送的包序号
     private int N = 5;                  // 窗口大小
-    // 已发送但没确认的包
-    private ConcurrentHashMap<Integer,TCP_PACKET> sentPackets = new ConcurrentHashMap<>();
+
+    // SR ： 每个包独立的状态和计时器
+    private ConcurrentHashMap<Integer,TCP_PACKET> sentPackets = new ConcurrentHashMap<>();  // 已发送但没确认的包
+    private ConcurrentHashMap<Integer,Boolean> ackedPackets = new ConcurrentHashMap<>();    // 记录每个包是否已确认
+    private ConcurrentHashMap<Integer,UDT_Timer> packetTimers = new ConcurrentHashMap<>();  // 每个包独立的计时器
 
     /*构造函数*/
     public TCP_Sender() {
@@ -40,7 +40,13 @@ public class TCP_Sender extends TCP_Sender_ADT {
 
         // GBN:检查窗口是否已满 （窗口范围 [base, base + N*100)
         while (nextSeq >= base + N * 100)
-            waitACK();  // 窗口满了，等待ACK释放窗口空间
+        {
+            try {
+                Thread.sleep(10);   // 防止CPU空转
+            } catch (InterruptedException e) {
+                e.printStackTrace();
+            }
+        }
 
         // 创建新的TCP_HEADER 和 TCP_SEGMENT
         TCP_HEADER newTcpH =  new TCP_HEADER();
@@ -56,16 +62,16 @@ public class TCP_Sender extends TCP_Sender_ADT {
         newTcpH.setTh_sum(CheckSum.computeChkSum(tcpPack));//更新带有checksum的TCP 报文头
         tcpPack.setTcpH(newTcpH);
 
-        // 缓存已发送的包（用于重传）
+        // SR: 除了缓存包，还要标记为"未确认"
         sentPackets.put(currentSeq,tcpPack);
+        ackedPackets.put(currentSeq,false);     // 标记为未确认
 
         //发送 TCP 数据报
         udt_send(tcpPack);
-        System.out.println("[GBN] Sent packet seq: " + currentSeq + ", Window: [" + base + ", " + (base + N * 100) + ")");
+        System.out.println("[SR] Sent packet seq: " + currentSeq + ", Window: [" + base + ", " + (base + N * 100) + ")");
 
-        // 如果是窗口内的第一个包，启动计时器
-        if (base == nextSeq)
-            startTimer();
+        // SR: 每个包都启动独立计时器
+        startTimer(currentSeq);
 
         // 更新下一个发送序号
         nextSeq += appData.length;
@@ -88,25 +94,39 @@ public class TCP_Sender extends TCP_Sender_ADT {
         //循环检查确认号对列中是否有新收到的ACK
         while (!ackQueue.isEmpty()){
             int currentAck=ackQueue.poll();
-            System.out.println("[GBN] Received Ack : " + currentAck);
+            System.out.println("[SR] Received Ack : " + currentAck);
 
-            //GBN: 累计确认
-            if (currentAck >= base){
-                // 收到一个ACK, 窗口右移一个包
-                base = currentAck + 100;    // 更新base
-                System.out.println("[GBN] Window slides to base: " + base);
+            //SR: 选择确认，每个包都确认
+            if (currentAck >= base & currentAck < base + N * 100)
+            {
+                // 判断该包是否在窗口内且未确认
+                if (ackedPackets.containsKey(currentAck) && !ackedPackets.get(currentAck))
+                {
+                    // 标记为已确认
+                    ackedPackets.put(currentAck, true);
+                    System.out.println("[SR] Packet" + currentAck + " Acked : ");
 
-                // 停止当前计时器
-                stopTimer();
+                    // 停止该包的计时器
+                    stopTimer(currentAck);
 
-                // 如果窜口内还有未确认的包，重启计时器
-                if (base < nextSeq)
-                    startTimer();
-            }else{
-                // 收到重复/错误 ACK -> 忽略，继续等超时
-                System.out.println("[GBN] Ignored old ACK: " + currentAck );
-                this.timer = null;
+                    // 若是base，滑动窗口
+                    if (currentAck == base)
+                    {
+                        // 批量划过
+                        while (ackedPackets.containsKey(base) && ackedPackets.get(base))
+                        {
+                            sentPackets.remove(base);
+                            ackedPackets.remove(base);
+                            packetTimers.remove(base);
+
+                            base += 100;
+                            System.out.println("[SR] Window slides to base: " + base);
+                        }
+                    }
+                }
             }
+            else if (currentAck < base)
+                System.out.println("[SR] Ignored old ACK: " + currentAck );
         }
     }
 
@@ -117,56 +137,46 @@ public class TCP_Sender extends TCP_Sender_ADT {
         if (CheckSum.computeChkSum(recvPack) == recvPack.getTcpH().getTh_sum())
         {   // 校验和正确
             int ackNum = recvPack.getTcpH().getTh_ack();
-            System.out.println("[RDT-2.2] Receive ACK Number： "+ ackNum);
+            System.out.println("[SR] Receive ACK Number： "+ ackNum);
             ackQueue.add(ackNum);
         }
         else
-        {   // 校验和错误，ACK损坏,视为重复ACK
-            System.out.println("[RDT-2.2] Receive Corrupted ACK , treat as duplicate ");
-
-            if (!ackQueue.isEmpty())
-            { // 使用上一次的ACK值（如果队列不为空）
-                ackQueue.add(ackQueue.peek());
-            }
-            else
-            { // 还没有收到任何ACK
-                ackQueue.add(-1);
-            }
-
+        {   // 校验和错误，ACK损坏,忽略
+            System.out.println("[SR] Receive Corrupted ACK , treat as duplicate ");
         }
 
         //处理ACK报文
         waitACK();
     }
 
-    // GBN: 启动计时器
-    private synchronized void startTimer() {
-        if (timer == null) {
-            timer = new UDT_Timer();
-            timer.schedule(new java.util.TimerTask(){
-                @Override
-                public void run() {
-                    System.out.println("[GBN] Timeout! Retransmitting from base: " + base);
-                    // GBN : 超时重传窗口内所有未确认的包
-                    for (int i = base; i < nextSeq; i += 100)
-                    {
-                        TCP_PACKET pkt = sentPackets.get(i);
-                        if (pkt != null)
-                        {
-                            udt_send(pkt);
-                            System.out.println("[GBN] Retransmit packet seq: " + i);
-                        }
+    // SR: 启动独立计时器
+    private synchronized void startTimer(final int seq) {
+        UDT_Timer timer = new UDT_Timer();
+        packetTimers.put(seq,timer);
+
+        timer.schedule(new java.util.TimerTask() {
+            @Override
+            public void run()
+            {   // SR: 只重传超时的那个包
+                if (ackedPackets.containsKey(seq) && !ackedPackets.get(seq)) {
+                    System.out.println("[SR] Timeout! Retransmitting packet seq: " + seq);
+                    TCP_PACKET pkt = sentPackets.get(seq);
+                    if (pkt != null) {
+                        udt_send(pkt);
+                        // 重新启动该包的计时器
+                        startTimer(seq);
                     }
                 }
-            },2000);
-        }
+            }
+        },3000);
     }
 
-    //GBN： 停止计时器
-    private synchronized void stopTimer() {
+    //SR： 停止计时器
+    private synchronized void stopTimer(int seq) {
+        UDT_Timer timer = packetTimers.get(seq);
         if (timer != null) {
             timer.cancel();
-            timer = null;
+            packetTimers.remove(seq);
         }
     }
 
