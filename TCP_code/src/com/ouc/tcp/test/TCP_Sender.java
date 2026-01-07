@@ -81,7 +81,7 @@ public class TCP_Sender extends TCP_Sender_ADT {
     //不可靠发送：将打包好的TCP数据报通过不可靠传输信道发送；仅需修改错误标志
     public void udt_send(TCP_PACKET stcpPack) {
         //设置错误控制标志
-        tcpH.setTh_eflag((byte)7);  //eFlag = 0，信道无错误，发送方像接收方发送数据时不会产生位错
+        stcpPack.getTcpH().setTh_eflag((byte)7);  //eFlag = 0，信道无错误，发送方像接收方发送数据时不会产生位错
         //System.out.println("to send: "+stcpPack.getTcpH().getTh_seq());
         //发送数据报
         client.send(stcpPack);
@@ -168,7 +168,7 @@ public class TCP_Sender extends TCP_Sender_ADT {
                     }
                 }
             }
-        },3000);
+        },1000);
     }
 
     //SR： 停止计时器
